@@ -1,20 +1,24 @@
 use clap::Parser;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::fs::File;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
-use std::{fs, fs::File};
 
 #[derive(Debug, Parser)]
-#[clap(
-  name = "mbtiles_tool",
-  about = "A tool for working with mbtiles archives",
+#[command(
+  name = "jp_plateau_tool",
+  about = "A tool to convert Plateau GML files to GeoJSON",
   version
 )]
 struct Cli {
-  #[clap(value_parser)]
+  /// The input zip file containing gml files.
+  #[arg()]
   input: PathBuf,
+
+  /// The output GeoJSON file.
+  #[arg(default_value = "./out.ndgeojson")]
+  output: PathBuf,
 }
 
 struct FileToProcess {
@@ -58,7 +62,7 @@ fn poslist_to_geometry(poslist: String) -> Geometry {
   }
 }
 
-fn process_one_file(file: FileToProcess) {
+fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
   println!("Processing file: {}", file.name.display());
   let mut reader = quick_xml::Reader::from_reader(file.data.as_slice());
   let mut features: Vec<Feature> = Vec::new();
@@ -86,15 +90,6 @@ fn process_one_file(file: FileToProcess) {
       Ok(quick_xml::events::Event::Start(e)) => match e.name().as_ref() {
         b"bldg:Building" => {
           current_properties = serde_json::Map::new();
-          // let attrs = e.attributes().map(|attr| attr.unwrap()).collect::<Vec<_>>();
-          // let gml_id = attrs
-          //   .iter()
-          //   .find(|attr| -> bool { attr.key.into_inner() == b"gml:id" })
-          //   .unwrap()
-          //   .unescape_value()
-          //   .unwrap();
-          // current_properties.insert("gml_id".to_string(), gml_id.to_string());
-          // println!("Found a building: {}", gml_id);
         }
         b"bldg:lod0RoofEdge" => in_lod0_roof_edge = true,
         b"gml:posList" => {
@@ -117,28 +112,16 @@ fn process_one_file(file: FileToProcess) {
           in_value = true;
         }
         _ => (),
-        // other => println!(
-        //   "Found something else: {}",
-        //   std::str::from_utf8(other).unwrap()
-        // ),
       },
       Ok(quick_xml::events::Event::Text(e)) => {
         if in_lod0_roof_edge && in_poslist {
           let text = e.unescape().unwrap().to_string();
           let geom = poslist_to_geometry(text);
-          // println!(
-          //   "roof edge poslist: {}",
-          //   serde_json::to_string(&geom).unwrap()
-          // );
           current_geometry = geom;
-        } else if let Some(_) = &current_string_attribute_name {
-          if in_value {
-            current_string_attribute_value = Some(e.unescape().unwrap().to_string());
-          }
-        } else if let Some(_) = &current_float_attribute_name {
-          if in_value {
-            current_float_attribute_value = Some(f64::from_str(&e.unescape().unwrap()).unwrap());
-          }
+        } else if current_string_attribute_name.is_some() && in_value {
+          current_string_attribute_value = Some(e.unescape().unwrap().to_string());
+        } else if current_float_attribute_name.is_some() && in_value {
+          current_float_attribute_value = Some(f64::from_str(&e.unescape().unwrap()).unwrap());
         }
       }
       Ok(quick_xml::events::Event::End(e)) => match e.name().as_ref() {
@@ -178,39 +161,34 @@ fn process_one_file(file: FileToProcess) {
           current_float_attribute_value = None;
         }
         _ => (),
-        // other => println!(
-        //   "Found the end of something else: {}",
-        //   std::str::from_utf8(other).unwrap()
-        // ),
       },
       _ => (),
     }
     buf.clear();
   }
 
-  // println!("{}", serde_json::to_string(&out_collection).unwrap());
-  let out_file_name = Path::new("./out/").join(format!(
-    "{}.ndgeojson",
-    file.name.file_stem().unwrap().to_string_lossy()
-  ));
-  let mut out_file = File::create(out_file_name).unwrap();
-  for feature in features {
-    let feature_json = serde_json::to_string(&feature).unwrap();
-    out_file.write_all(feature_json.as_bytes()).unwrap();
-    out_file.write_all(b"\n").unwrap();
-  }
+  features
 }
 
 fn initialize_processors(
   process_rx: crossbeam::channel::Receiver<FileToProcess>,
+  output_tx: crossbeam::channel::Sender<Vec<u8>>,
 ) -> Vec<std::thread::JoinHandle<()>> {
   let thread_count = num_cpus::get();
   let mut threads = Vec::with_capacity(thread_count);
   for _ in 0..thread_count {
     let process_rx = process_rx.clone();
+    let output_tx = output_tx.clone();
     threads.push(std::thread::spawn(move || {
       for file in process_rx {
-        process_one_file(file);
+        let features = process_one_file(&file);
+        let mut buffer = Vec::new();
+        for feature in features {
+          let feature_json = serde_json::to_vec(&feature).unwrap();
+          buffer.extend_from_slice(&feature_json);
+          buffer.extend(b"\n");
+        }
+        output_tx.send(buffer).unwrap();
       }
     }));
   }
@@ -219,33 +197,47 @@ fn initialize_processors(
 
 fn main() {
   let args = Cli::parse();
+  crossbeam::scope(|s| {
+    let mut out_file = File::options()
+      .write(true)
+      .create_new(true)
+      .open(args.output)
+      .unwrap();
+    let file = File::open(args.input).unwrap();
+    let mut archive = zip::ZipArchive::new(file).unwrap();
 
-  fs::create_dir("./out").unwrap();
+    let (process_tx, process_rx) = crossbeam::channel::unbounded();
+    let (output_tx, output_rx) = crossbeam::channel::unbounded::<Vec<u8>>();
+    let process_threads = initialize_processors(process_rx, output_tx);
 
-  let file = File::open(args.input).unwrap();
-  let mut archive = zip::ZipArchive::new(file).unwrap();
+    s.spawn(move |_| {
+      for i in 0..archive.len() {
+        let mut file = archive.by_index(i).unwrap();
+        let parts = file.name().split('/').collect::<Vec<_>>();
+        if parts.len() == 4 && parts[1] == "udx" && parts[2] == "bldg" && parts[3].ends_with(".gml")
+        {
+          // println!("{}", file.name());
+          let mut buf = Vec::with_capacity(file.size() as usize);
+          file.read_to_end(&mut buf).unwrap();
+          process_tx
+            .send(FileToProcess {
+              name: file.enclosed_name().unwrap().to_path_buf(),
+              data: buf,
+            })
+            .unwrap();
+        }
+      }
+    });
 
-  let (process_tx, process_rx) = crossbeam::channel::unbounded();
-  let process_threads = initialize_processors(process_rx);
+    s.spawn(move |_| {
+      for buffer in output_rx {
+        out_file.write_all(&buffer).unwrap();
+      }
+    });
 
-  for i in 0..archive.len() {
-    let mut file = archive.by_index(i).unwrap();
-    let parts = file.name().split('/').collect::<Vec<_>>();
-    if parts.len() == 4 && parts[1] == "udx" && parts[2] == "bldg" && parts[3].ends_with(".gml") {
-      // println!("{}", file.name());
-      let mut buf = Vec::with_capacity(file.size() as usize);
-      file.read_to_end(&mut buf).unwrap();
-      process_tx
-        .send(FileToProcess {
-          name: file.enclosed_name().unwrap().to_path_buf(),
-          data: buf,
-        })
-        .unwrap();
+    for thread in process_threads {
+      thread.join().unwrap();
     }
-  }
-
-  drop(process_tx);
-  for thread in process_threads {
-    thread.join().unwrap();
-  }
+  })
+  .unwrap();
 }
