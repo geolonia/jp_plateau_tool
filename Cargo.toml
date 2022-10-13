@@ -1,0 +1,14 @@
+[package]
+name = "jp_plateau_tool"
+version = "0.1.0"
+edition = "2021"
+authors = ["Keitaroh Kobayashi <k.kobayashi@geolonia.com>"]
+homepage = "https://github.com/geolonia/jp_plateau_tool"
+
+[dependencies]
+clap = { version = "3.2.8", features = ["derive"] }
+
+zip = "0.6.2"
+crossbeam = "0.8"
+num_cpus = "1.13.1"
+quick-xml = "0.25.0"
