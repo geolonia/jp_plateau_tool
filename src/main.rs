@@ -1,5 +1,5 @@
 use clap::Parser;
-use serde::{Deserialize, Serialize};
+use geojson::{Feature, Geometry, Value};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -26,40 +26,13 @@ struct FileToProcess {
   data: Vec<u8>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Geometry {
-  #[serde(rename = "type")]
-  type_: String,
-  coordinates: Vec<Vec<Vec<f64>>>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Feature {
-  #[serde(rename = "type")]
-  type_: String,
-  geometry: Geometry,
-  properties: serde_json::Map<String, serde_json::Value>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct FeatureCollection {
-  #[serde(rename = "type")]
-  type_: String,
-  features: Vec<Feature>,
-}
-
-fn poslist_to_geometry(poslist: String) -> Geometry {
+fn poslist_to_coords(poslist: String) -> Vec<Vec<f64>> {
   let coords: Vec<f64> = poslist
     .split(' ')
     .map(|x| f64::from_str(x).unwrap())
     .collect();
   // this is a 3d polygon. strip the z values, and reverse the order of the x and y coordinates to match GeoJSON spec
-  let coords = coords.chunks(3).map(|c| vec![c[1], c[0]]).collect();
-
-  Geometry {
-    type_: "Polygon".to_string(),
-    coordinates: vec![coords],
-  }
+  coords.chunks(3).map(|c| vec![c[1], c[0]]).collect()
 }
 
 fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
@@ -79,10 +52,7 @@ fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
   let mut current_float_attribute_value: Option<f64> = None;
 
   let mut current_properties: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
-  let mut current_geometry: Geometry = Geometry {
-    type_: "Polygon".to_string(),
-    coordinates: vec![],
-  };
+  let mut current_poslist: Vec<Vec<Vec<f64>>> = vec![];
   loop {
     match reader.read_event_into(&mut buf) {
       Err(e) => panic!("Error at position {}: {:?}", reader.buffer_position(), e),
@@ -116,8 +86,8 @@ fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
       Ok(quick_xml::events::Event::Text(e)) => {
         if in_lod0_roof_edge && in_poslist {
           let text = e.unescape().unwrap().to_string();
-          let geom = poslist_to_geometry(text);
-          current_geometry = geom;
+          let coords = poslist_to_coords(text);
+          current_poslist.push(coords);
         } else if current_string_attribute_name.is_some() && in_value {
           current_string_attribute_value = Some(e.unescape().unwrap().to_string());
         } else if current_float_attribute_name.is_some() && in_value {
@@ -126,17 +96,19 @@ fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
       }
       Ok(quick_xml::events::Event::End(e)) => match e.name().as_ref() {
         b"bldg:Building" => {
+          let poslist = std::mem::take(&mut current_poslist);
+
           let feature = Feature {
-            type_: "Feature".to_string(),
-            geometry: std::mem::replace(
-              &mut current_geometry,
-              Geometry {
-                type_: "Polygon".to_string(),
-                coordinates: vec![],
-              },
-            ),
-            properties: std::mem::replace(&mut current_properties, serde_json::Map::new()),
+            bbox: None,
+            geometry: Some(Geometry::new(Value::Polygon(poslist))),
+            id: None,
+            properties: Some(std::mem::replace(
+              &mut current_properties,
+              serde_json::Map::new(),
+            )),
+            foreign_members: None,
           };
+
           features.push(feature);
         }
         b"bldg:lod0RoofEdge" => in_lod0_roof_edge = false,
