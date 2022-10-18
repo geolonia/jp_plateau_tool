@@ -2,3 +2,6 @@
 *.gml
 /out
 *.ndgeojson
+*.csv
+*.mbtiles
+node_modules
