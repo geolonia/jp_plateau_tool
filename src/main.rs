@@ -75,6 +75,10 @@ fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
             Some(String::from_utf8_lossy(&name_attr.value).to_string());
           current_string_attribute_value = None;
         }
+        b"gml:name" => {
+          current_string_attribute_name = Some("name".to_string());
+          in_value = true;
+        }
         b"gen:value" => in_value = true,
         b"bldg:measuredHeight" => {
           current_float_attribute_name = Some("measuredHeight".to_string());
@@ -114,6 +118,14 @@ fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
         b"bldg:lod0RoofEdge" => in_lod0_roof_edge = false,
         b"gml:posList" => in_poslist = false,
         b"gen:value" => in_value = false,
+        b"gml:name" => {
+          in_value = false;
+          let name = current_string_attribute_name.unwrap();
+          let value = current_string_attribute_value.unwrap();
+          current_properties.insert(name, serde_json::Value::String(value));
+          current_string_attribute_name = None;
+          current_string_attribute_value = None;
+        }
         b"gen:stringAttribute" => {
           let name = current_string_attribute_name.unwrap();
           let value = current_string_attribute_value.unwrap();
