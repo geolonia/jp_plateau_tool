@@ -45,11 +45,15 @@ fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
   let mut in_poslist = false;
 
   let mut in_value = false;
+  let mut current_string_attribute_prefix: Option<String> = None;
   let mut current_string_attribute_name: Option<String> = None;
   let mut current_string_attribute_value: Option<String> = None;
 
   let mut current_float_attribute_name: Option<String> = None;
   let mut current_float_attribute_value: Option<f64> = None;
+
+  let mut current_u64_attribute_name: Option<String> = None;
+  let mut current_u64_attribute_value: Option<u64> = None;
 
   let mut current_properties: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
   let mut current_poslist: Vec<Vec<Vec<f64>>> = vec![];
@@ -65,24 +69,80 @@ fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
         b"gml:posList" => {
           in_poslist = true;
         }
+        b"gen:genericAttributeSet" => {
+          let name_attr = e
+            .attributes()
+            .map(|x| x.unwrap())
+            .find(|x| x.key.into_inner() == b"name")
+            .unwrap();
+          let name_attr_str = String::from_utf8_lossy(&name_attr.value).to_string();
+          current_string_attribute_prefix = Some(format!("建築物::{}", name_attr_str));
+        }
         b"gen:stringAttribute" => {
           let name_attr = e
             .attributes()
             .map(|x| x.unwrap())
             .find(|x| x.key.into_inner() == b"name")
             .unwrap();
-          current_string_attribute_name =
-            Some(String::from_utf8_lossy(&name_attr.value).to_string());
+          let name_attr_str = String::from_utf8_lossy(&name_attr.value).to_string();
+          if let Some(prefix) = &current_string_attribute_prefix {
+            current_string_attribute_name = Some(format!("{}::{}", prefix, name_attr_str));
+          } else {
+            current_string_attribute_name = Some(name_attr_str);
+          }
           current_string_attribute_value = None;
         }
+        b"gen:measureAttribute" => {
+          let name_attr = e
+            .attributes()
+            .map(|x| x.unwrap())
+            .find(|x| x.key.into_inner() == b"name")
+            .unwrap();
+          let name_attr_str = String::from_utf8_lossy(&name_attr.value).to_string();
+          if let Some(prefix) = &current_string_attribute_prefix {
+            current_float_attribute_name = Some(format!("{}::{}", prefix, name_attr_str));
+          } else {
+            current_float_attribute_name = Some(name_attr_str);
+          }
+          current_float_attribute_value = None;
+        }
         b"gml:name" => {
-          current_string_attribute_name = Some("name".to_string());
+          current_string_attribute_name = Some("建築物::名称".to_string());
           in_value = true;
         }
         b"gen:value" => in_value = true,
         b"bldg:measuredHeight" => {
-          current_float_attribute_name = Some("measuredHeight".to_string());
+          current_float_attribute_name = Some("建築物::計測高さ".to_string());
           current_float_attribute_value = None;
+          in_value = true;
+        }
+        b"xAL:LocalityName" => {
+          current_string_attribute_name = Some("建築物::住所".to_string());
+          in_value = true;
+        }
+        b"uro:buildingRoofEdgeArea" => {
+          current_float_attribute_name = Some("建築物::建物利用現況::図上面積".to_string());
+          current_float_attribute_value = None;
+          in_value = true;
+        }
+        b"uro:districtsAndZonesType" => {
+          current_u64_attribute_name = Some("建築物::建物利用現況::地域地区".to_string());
+          current_u64_attribute_value = None;
+          in_value = true;
+        }
+        b"uro:prefecture" => {
+          current_u64_attribute_name = Some("建築物::建物利用現況::都道府県".to_string());
+          current_u64_attribute_value = None;
+          in_value = true;
+        }
+        b"uro:city" => {
+          current_u64_attribute_name = Some("建築物::建物利用現況::市区町村".to_string());
+          current_u64_attribute_value = None;
+          in_value = true;
+        }
+        b"uro:surveyYear" => {
+          current_u64_attribute_name = Some("建築物::建物利用現況::調査年".to_string());
+          current_u64_attribute_value = None;
           in_value = true;
         }
         _ => (),
@@ -93,9 +153,39 @@ fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
           let coords = poslist_to_coords(text);
           current_poslist.push(coords);
         } else if current_string_attribute_name.is_some() && in_value {
-          current_string_attribute_value = Some(e.unescape().unwrap().to_string());
+          current_string_attribute_value =
+            Some(e.unescape().unwrap().to_string().trim().to_string());
         } else if current_float_attribute_name.is_some() && in_value {
-          current_float_attribute_value = Some(f64::from_str(&e.unescape().unwrap()).unwrap());
+          if let Ok(value) = e
+            .unescape()
+            .unwrap()
+            .to_string()
+            .trim()
+            .to_string()
+            .parse::<f64>()
+          {
+            current_float_attribute_value = Some(value);
+          } else {
+            current_float_attribute_value = None;
+            // panic!(
+            //   "Error parsing float attribute value: {:?}",
+            //   e.unescape().unwrap().to_string()
+            // );
+          }
+        } else if current_u64_attribute_name.is_some() && in_value {
+          current_u64_attribute_value = Some(
+            e.unescape()
+              .unwrap()
+              .to_string()
+              .trim()
+              .to_string()
+              .parse::<u64>()
+              .unwrap(),
+          );
+          println!(
+            "current_u64_attribute_value: {:?}",
+            current_u64_attribute_value
+          );
         }
       }
       Ok(quick_xml::events::Event::End(e)) => match e.name().as_ref() {
@@ -118,14 +208,7 @@ fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
         b"bldg:lod0RoofEdge" => in_lod0_roof_edge = false,
         b"gml:posList" => in_poslist = false,
         b"gen:value" => in_value = false,
-        b"gml:name" => {
-          in_value = false;
-          let name = current_string_attribute_name.unwrap();
-          let value = current_string_attribute_value.unwrap();
-          current_properties.insert(name, serde_json::Value::String(value));
-          current_string_attribute_name = None;
-          current_string_attribute_value = None;
-        }
+        b"gen:genericAttributeSet" => current_string_attribute_prefix = None,
         b"gen:stringAttribute" => {
           let name = current_string_attribute_name.unwrap();
           let value = current_string_attribute_value.unwrap();
@@ -133,16 +216,54 @@ fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
           current_string_attribute_name = None;
           current_string_attribute_value = None;
         }
-        b"bldg:measuredHeight" => {
+        b"gen:measureAttribute" => {
           let name = current_float_attribute_name.unwrap();
-          let value = current_float_attribute_value.unwrap();
-          in_value = false;
-          current_properties.insert(
-            name,
-            serde_json::Value::Number(serde_json::Number::from_f64(value).unwrap()),
-          );
+          if let Some(value) = current_float_attribute_value {
+            current_properties.insert(
+              name,
+              serde_json::Value::Number(serde_json::Number::from_f64(value).unwrap()),
+            );
+          } else {
+            current_properties.insert(name, serde_json::Value::Null);
+          }
           current_float_attribute_name = None;
           current_float_attribute_value = None;
+        }
+        b"gml:name" | b"xAL:LocalityName" => {
+          in_value = false;
+          let name = current_string_attribute_name.unwrap();
+          let value = current_string_attribute_value.unwrap();
+          current_properties.insert(name, serde_json::Value::String(value));
+          current_string_attribute_name = None;
+          current_string_attribute_value = None;
+        }
+        b"bldg:measuredHeight" => {
+          in_value = false;
+          let name = current_float_attribute_name.unwrap();
+          if let Some(value) = current_float_attribute_value {
+            current_properties.insert(
+              name,
+              serde_json::Value::Number(serde_json::Number::from_f64(value).unwrap()),
+            );
+          } else {
+            current_properties.insert(name, serde_json::Value::Null);
+          }
+          current_float_attribute_name = None;
+          current_float_attribute_value = None;
+        }
+        b"uro:districtsAndZonesType" | b"uro:prefecture" | b"uro:city" | b"uro:surveyYear" => {
+          in_value = false;
+          let name = current_u64_attribute_name.unwrap();
+          if let Some(value) = current_u64_attribute_value {
+            current_properties.insert(
+              name,
+              serde_json::Value::Number(serde_json::Number::from(value)),
+            );
+          } else {
+            current_properties.insert(name, serde_json::Value::Null);
+          }
+          current_u64_attribute_name = None;
+          current_u64_attribute_value = None;
         }
         _ => (),
       },
