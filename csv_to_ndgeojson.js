@@ -14,12 +14,12 @@ const csv = require('csv-parse');
   inputStream.pipe(parser);
 
   for await (const row of parser) {
-    const [pref_town_cd, _bldg, bldg_id] = row.id.split('-');
+    const [_pref_town_cd, _bldg, bldg_id] = row.id.split('-');
     await outF.write(JSON.stringify({
       type: 'Feature',
       geometry: JSON.parse(row.geometry),
       properties: JSON.parse(row.attributes),
-      id: parseInt(pref_town_cd + bldg_id, 10),
+      id: parseInt(bldg_id, 10),
     }) + '\n');
   }
   await outF.close();
