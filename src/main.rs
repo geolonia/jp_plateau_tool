@@ -55,6 +55,13 @@ fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
   let mut current_u64_attribute_name: Option<String> = None;
   let mut current_u64_attribute_value: Option<u64> = None;
 
+  let mut in_extended_attribute = false;
+  let mut in_key_value_pair = false;
+  let mut in_extended_attr_key = false;
+  let mut in_extended_attr_code_value = false;
+  let mut current_extended_attr_key: Option<String> = None;
+  let mut current_extended_attr_value: Option<String> = None;
+
   let mut current_properties: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
   let mut current_poslist: Vec<Vec<Vec<f64>>> = vec![];
   loop {
@@ -69,6 +76,10 @@ fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
         b"gml:posList" => {
           in_poslist = true;
         }
+        b"uro:extendedAttribute" => in_extended_attribute = true,
+        b"uro:KeyValuePair" => in_key_value_pair = true,
+        b"uro:key" => in_extended_attr_key = true,
+        b"uro:codeValue" => in_extended_attr_code_value = true,
         b"gen:genericAttributeSet" => {
           let name_attr = e
             .attributes()
@@ -87,8 +98,10 @@ fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
           let name_attr_str = String::from_utf8_lossy(&name_attr.value).to_string();
           if let Some(prefix) = &current_string_attribute_prefix {
             current_string_attribute_name = Some(format!("{}::{}", prefix, name_attr_str));
+          } else if name_attr_str == "建物ID" {
+            current_string_attribute_name = Some("建築物::汎用属性::建物ID".to_string());
           } else {
-            current_string_attribute_name = Some(name_attr_str);
+            current_string_attribute_name = None;
           }
           current_string_attribute_value = None;
         }
@@ -182,10 +195,10 @@ fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
               .parse::<u64>()
               .unwrap(),
           );
-          println!(
-            "current_u64_attribute_value: {:?}",
-            current_u64_attribute_value
-          );
+        } else if in_extended_attribute && in_key_value_pair && in_extended_attr_key {
+          current_extended_attr_key = Some(e.unescape().unwrap().to_string().trim().to_string());
+        } else if in_extended_attribute && in_key_value_pair && in_extended_attr_code_value {
+          current_extended_attr_value = Some(e.unescape().unwrap().to_string().trim().to_string());
         }
       }
       Ok(quick_xml::events::Event::End(e)) => match e.name().as_ref() {
@@ -208,11 +221,36 @@ fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
         b"bldg:lod0RoofEdge" => in_lod0_roof_edge = false,
         b"gml:posList" => in_poslist = false,
         b"gen:value" => in_value = false,
+        b"uro:keyValuePair" => in_key_value_pair = false,
+        b"uro:key" => in_extended_attr_key = false,
+        b"uro:codeValue" => in_extended_attr_code_value = false,
+        b"uro:extendedAttribute" => {
+          // println!(
+          //   "key: {:?}, value: {:?}",
+          //   current_extended_attr_key, current_extended_attr_value
+          // );
+          in_extended_attribute = false;
+          match current_extended_attr_key {
+            Some(key) => {
+              if key == "2" {
+                let value = current_extended_attr_value.unwrap();
+                current_properties.insert(
+                  "建築物::拡張属性::LOD1の立ち上げに使用する建築物の高さ".to_string(),
+                  serde_json::Value::String(value),
+                );
+              }
+            }
+            _ => (),
+          }
+          current_extended_attr_value = None;
+          current_extended_attr_key = None;
+        }
         b"gen:genericAttributeSet" => current_string_attribute_prefix = None,
         b"gen:stringAttribute" => {
-          let name = current_string_attribute_name.unwrap();
-          let value = current_string_attribute_value.unwrap();
-          current_properties.insert(name, serde_json::Value::String(value));
+          if let Some(name) = current_string_attribute_name {
+            let value = current_string_attribute_value.unwrap();
+            current_properties.insert(name, serde_json::Value::String(value));
+          }
           current_string_attribute_name = None;
           current_string_attribute_value = None;
         }
@@ -237,7 +275,7 @@ fn process_one_file(file: &FileToProcess) -> Vec<Feature> {
           current_string_attribute_name = None;
           current_string_attribute_value = None;
         }
-        b"bldg:measuredHeight" => {
+        b"bldg:measuredHeight" | b"uro:buildingRoofEdgeArea" => {
           in_value = false;
           let name = current_float_attribute_name.unwrap();
           if let Some(value) = current_float_attribute_value {

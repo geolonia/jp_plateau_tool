@@ -12,10 +12,10 @@ const wkt = require('wkt');
   });
   for await (const rawLine of rl) {
     const line = JSON.parse(rawLine);
-    const properties = {...line.properties, ["建物ID"]: undefined};
+    const properties = {...line.properties};
     const propertiesStr = JSON.stringify(properties).replaceAll('"', '""');
     const wktPolygon = wkt.stringify(line.geometry);
-    await outF.write(`"${line.properties["建物ID"]}","${wktPolygon}","${propertiesStr}"\n`);
+    await outF.write(`"${line.properties["建築物::汎用属性::建物ID"]}","${wktPolygon}","${propertiesStr}"\n`);
   }
   await outF.close();
 })();
