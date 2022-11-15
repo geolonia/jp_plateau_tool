@@ -135,3 +135,9 @@ key=2 is `LOD1の立ち上げに使用する建築物の高さ`
   </gen:measureAttribute>
 </gen:genericAttributeSet>
 ```
+
+## tippecanoe
+
+```
+tippecanoe -Z15 -z17 -P --force --drop-smallest-as-needed --extend-zooms-if-still-dropping -o plateau_minato_ku_2022_11_15.mbtiles -l plateau_bldg ./output_from_csv_2022_11_15.ndgeojson
+```

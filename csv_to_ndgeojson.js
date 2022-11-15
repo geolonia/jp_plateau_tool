@@ -5,7 +5,7 @@ const csv = require('csv-parse');
 
 (async () => {
   const input = process.argv[2];
-  const outF = await fs.promises.open('output_from_csv.ndgeojson', 'w');
+  const outF = await fs.promises.open('output_from_csv_2022_11_15.ndgeojson', 'w');
 
   const parser = csv.parse({
     columns: true,
