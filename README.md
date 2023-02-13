@@ -1,16 +1,28 @@
-# `建築物::名称`
+# セットアップ
+
+```
+cargo build --release
+```
+
+`target/release/jp_plateau_tool` にバイナリが入ります。
+
+第一引数として、元データとなるGMLファイルが入ったzipを指定します。第２引数には出力の NDGeoJSON ファイルを指定します。
+
+## XML 内容説明
+
+### `建築物::名称`
 
 ```
 <gml:name>赤塚三郵便局</gml:name>
 ```
 
-# `建築物::計測高さ`
+### `建築物::計測高さ`
 
 ```
 <bldg:measuredHeight uom="m">31.7</bldg:measuredHeight>
 ```
 
-# `建築物::住所`
+### `建築物::住所`
 
 ```
 <bldg:address>
@@ -29,7 +41,7 @@
 </bldg:address>
 ```
 
-# `建築物::建物利用現況`
+### `建築物::建物利用現況`
 
 * `図上面積` -> `uro:buildingRoofEdgeArea`
 * `地域地区` -> `uro:districtsAndZonesType`
@@ -49,7 +61,7 @@
 </uro:buildingDetails>
 ```
 
-# `建築物::拡張属性::調査年::key=2`
+### `建築物::拡張属性::調査年::key=2`
 
 ```
 <uro:extendedAttribute>
@@ -112,7 +124,7 @@ key=2 is `LOD1の立ち上げに使用する建築物の高さ`
 </gml:Dictionary>
 ```
 
-# `建築物::汎用属性::建物ID`
+### `建築物::汎用属性::建物ID`
 
 ```
 <gen:stringAttribute name="建物ID">
@@ -120,7 +132,7 @@ key=2 is `LOD1の立ち上げに使用する建築物の高さ`
 </gen:stringAttribute>
 ```
 
-# `建築物::災害リスク汎用属性セット::*`
+### `建築物::災害リスク汎用属性セット::*`
 
 ```
 <gen:genericAttributeSet name="神田川流域浸水予想区域（想定最大規模）">
@@ -136,7 +148,7 @@ key=2 is `LOD1の立ち上げに使用する建築物の高さ`
 </gen:genericAttributeSet>
 ```
 
-## tippecanoe
+### tippecanoe
 
 ```
 tippecanoe -Z15 -z17 -P --force --drop-smallest-as-needed --extend-zooms-if-still-dropping -o plateau_minato_ku_2022_11_15.mbtiles -l plateau_bldg ./output_from_csv_2022_11_15.ndgeojson
